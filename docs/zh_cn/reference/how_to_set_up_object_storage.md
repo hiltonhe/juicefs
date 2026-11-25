@@ -74,6 +74,52 @@ juicefs format --storage s3 \
 
 公有云通常允许用户创建 IAM（Identity and Access Management）角色，例如：[AWS IAM 角色](https://docs.aws.amazon.com/zh_cn/IAM/latest/UserGuide/id_roles.html) 或 [阿里云 RAM 角色](https://help.aliyun.com/document_detail/93689.html)，可将角色分配给 VM 实例。如果云服务器实例已经拥有读写对象存储的权限，则无需再指定 `--access-key` 和 `--secret-key`。
 
+## 忽略 format 中的凭据 {#ignore-format-credentials}
+
+当卷的 format 里仍有 Access Key，但希望某个客户端改用对象存储 SDK 的默认凭据链时，
+可以设置：
+
+```bash
+export JFS_IGNORE_FORMAT_CREDENTIALS=1
+```
+
+这是一个客户端本地开关，只对 `s3` 和 `oss` 生效；format 和其他客户端都不受影响。
+对这两种后端，JuiceFS 在创建 storage 前会清空 format 里的 AK/SK/token，让 SDK
+回退到默认凭据链：
+
+- AWS：`role_arn` + `source_profile`、`credential_process`、IRSA、实例角色等。
+- 阿里云：`~/.alibabacloud/credentials` 中的 `ram_role_arn`、RRSA/OIDC、ECS
+  实例角色等。
+
+例如，AWS 使用一个只能 AssumeRole 的 source key：
+
+```ini
+# ~/.aws/config
+[profile juicefs]
+role_arn = arn:aws:iam::123456789012:role/juicefs
+source_profile = default
+region = us-east-1
+```
+
+阿里云使用 `ram_role_arn`：
+
+```ini
+# ~/.alibabacloud/credentials
+[default]
+type = ram_role_arn
+access_key_id = LTAI...
+access_key_secret = ...
+role_arn = acs:ram::1234567890:role/juicefs
+role_session_name = jfs-client
+```
+
+可以按客户端灰度：设置该变量的客户端走 SDK 凭据链，未设置的客户端继续使用 format
+里的 AK。如果 SDK 凭据链没有配置好，取消该变量并重启客户端，即可回退到 format AK。
+所有客户端迁移完成后，再从 format 中移除静态凭据并禁用旧 AK。
+
+该开关不会修改元数据。其他存储后端仍然使用静态凭据（会打印警告），因为它们不一定
+有 SDK 默认凭据链。
+
 ## 使用临时访问凭证 {#session-token}
 
 永久访问凭证一般有两个部分：Access Key 和 Secret Key，而临时访问凭证一般包括 3 个部分：Access Key、Secret Key 与 token，并且临时访问凭证具有过期时间，一般在几分钟到几个小时之间。

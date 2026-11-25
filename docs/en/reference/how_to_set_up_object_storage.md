@@ -74,6 +74,58 @@ juicefs format --storage s3 \
 
 Public clouds typically allow users to create IAM (Identity and Access Management) roles, such as [AWS IAM role](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles.html) or [Alibaba Cloud RAM role](https://www.alibabacloud.com/help/doc-detail/110376.htm), which can be assigned to VM instances. If the cloud server instance already has read and write access to the object storage, there is no need to specify `--access-key` and `--secret-key`.
 
+## Ignore format credentials {#ignore-format-credentials}
+
+When the volume format still contains an access key but a client should use the
+object storage SDK's default credential chain instead, set:
+
+```bash
+export JFS_IGNORE_FORMAT_CREDENTIALS=1
+```
+
+This is a client-side switch. It only applies to `s3` and `oss`; the format and
+other clients are unchanged. For these backends JuiceFS clears the
+format-provided AK/SK/token before creating the storage, so the SDK falls back
+to its default credential chain:
+
+- AWS: `role_arn` + `source_profile`, `credential_process`, IRSA, instance role,
+  and other standard providers.
+- Aliyun: `ram_role_arn` in `~/.alibabacloud/credentials`, RRSA/OIDC, ECS
+  instance role, and other standard providers.
+
+For example, an AWS profile using a source key that is only allowed to assume a
+role:
+
+```ini
+# ~/.aws/config
+[profile juicefs]
+role_arn = arn:aws:iam::123456789012:role/juicefs
+source_profile = default
+region = us-east-1
+```
+
+An Aliyun profile using `ram_role_arn`:
+
+```ini
+# ~/.alibabacloud/credentials
+[default]
+type = ram_role_arn
+access_key_id = LTAI...
+access_key_secret = ...
+role_arn = acs:ram::1234567890:role/juicefs
+role_session_name = jfs-client
+```
+
+Use this for a per-client canary: clients with the variable use the SDK chain,
+while other clients keep using the format AK. If the SDK chain is not configured
+correctly, unset the variable and restart the client to fall back to the format
+AK. After all clients have migrated, remove the static credentials from the
+format and disable the old AK.
+
+The switch does not modify metadata. Other storage backends keep using their
+static credentials (with a warning), because they may not have an SDK default
+credential chain.
+
 ## Use temporary access credentials {#session-token}
 
 Permanent access credentials generally have two parts, Access Key, Secret Key, while temporary access credentials generally include three parts, Access Key, Secret Key and token, and temporary access credentials have an expiration time, usually between a few minutes and a few hours.

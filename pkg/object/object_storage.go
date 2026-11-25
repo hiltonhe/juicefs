@@ -241,8 +241,43 @@ type VolumeConfig struct {
 	EncryptAlgo  string
 }
 
+const ignoreFormatCredentialsEnv = "JFS_IGNORE_FORMAT_CREDENTIALS"
+
+func ignoreFormatCredentials() bool {
+	v := strings.TrimSpace(os.Getenv(ignoreFormatCredentialsEnv))
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		logger.Warnf("invalid %s value %q, expected true or false", ignoreFormatCredentialsEnv, v)
+		return false
+	}
+	return b
+}
+
+// applyFormatCredentialOverride lets a client ignore the static credentials in
+// the volume format and fall through to the backend SDK's default credential
+// chain. It is intentionally local to the client: no metadata is changed, and
+// clients that do not set the environment variable keep using the format AK.
+func applyFormatCredentialOverride(config VolumeConfig) VolumeConfig {
+	if !ignoreFormatCredentials() {
+		return config
+	}
+	switch strings.ToLower(config.Storage) {
+	case "s3", "oss":
+		config.AccessKey = ""
+		config.SecretKey = ""
+		config.SessionToken = ""
+	default:
+		logger.Warnf("%s is set, but storage %q has no SDK default credential chain; keeping static credentials", ignoreFormatCredentialsEnv, config.Storage)
+	}
+	return config
+}
+
 // CreateVolumeStorage creates storage with the volume's prefix, tiers and encryption.
 func CreateVolumeStorage(config VolumeConfig) (ObjectStorage, error) {
+	config = applyFormatCredentialOverride(config)
 	UserAgent = "JuiceFS-" + version.Version()
 	var blob ObjectStorage
 	var err error
